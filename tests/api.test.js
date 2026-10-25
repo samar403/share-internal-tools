@@ -190,3 +190,38 @@ test("same-origin mutation guard and security headers", async () => {
   );
   assert.equal(r.headers.get("cache-control"), "no-store");
 });
+
+test("SQLite records and accounts survive process restart", async () => {
+  server.kill();
+  await new Promise((resolve) => server.once("exit", resolve));
+  server = spawn(process.execPath, ["server/index.js"], {
+    env: { ...process.env, PORT: String(port), DATA_DIR: dir },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  server.stdout.on("data", (b) => (log += b));
+  server.stderr.on("data", (b) => (log += b));
+  let available = false;
+  for (let n = 0; n < 80; n++) {
+    try {
+      if ((await fetch(base + "/api/health")).ok) {
+        available = true;
+        break;
+      }
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.ok(available, log);
+  const a = client();
+  assert.equal(
+    (
+      await a("/auth/login", "POST", {
+        email: "owner@example.com",
+        password: "correct-horse-battery",
+      })
+    ).status,
+    200,
+  );
+  const tools = (await a("/tools")).data;
+  assert.equal(tools.length, 3);
+  assert.equal((await a("/tools/" + tools[0].id)).data.records.length, 3);
+});
